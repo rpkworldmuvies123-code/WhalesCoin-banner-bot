@@ -151,59 +151,29 @@ async def commentary(kind):
           f"Top negative mover: {movers[-1]['name']} ({movers[-1]['change']:+.2f}%).\n"
           "24-hour market snapshot only; not chart-based technical analysis or a trade signal.")
     return body+"\n\n"+shayari()+"\n\nData snapshot · Not financial advice."
-async def download_highlight_image(kind):
-    """Use the website's visible Share Top Coins -> Download Image UI."""
-    from playwright.async_api import async_playwright
-    import tempfile
-
-    url = GAINERS_URL if kind == "gainers" else TRENDING_URL
-    fd, output_path = tempfile.mkstemp(prefix=f"whalescoin-{kind}-", suffix=".png")
-    os.close(fd)
-    os.unlink(output_path)
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-        page = await browser.new_page(accept_downloads=True, viewport={"width": 1440, "height": 1000})
-        try:
-            response = await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            if response and response.status >= 400:
-                raise RuntimeError(f"WhalesCoin page returned HTTP {response.status}")
-            await page.wait_for_timeout(3000)
-            # First open the site's own share/export panel.
-            share = page.get_by_text("Share Top Coins", exact=False).first
-            await share.wait_for(state="visible", timeout=20000)
-            await share.click()
-            # Capture the actual file produced by the website's Download Image action.
-            download_button = page.get_by_text("Download Image", exact=False).first
-            await download_button.wait_for(state="visible", timeout=15000)
-            async with page.expect_download(timeout=30000) as download_info:
-                await download_button.click()
-            download = await download_info.value
-            await download.save_as(output_path)
-            if not os.path.isfile(output_path) or os.path.getsize(output_path) < 1024:
-                raise RuntimeError("Website download was empty or invalid")
-            return output_path
-        except Exception:
-            if os.path.exists(output_path):
-                os.unlink(output_path)
-            raise
-        finally:
-            await browser.close()
+async def download_highlight_image(kind, rows=None):
+    """Create an original branded PNG locally from live public market data."""
+    from market_image import render_highlight
+    if rows is None:
+        rows = await get_rows()
+    return await asyncio.to_thread(render_highlight, kind, rows, os.getenv("TIMEZONE","Asia/Kolkata"))
 
 async def publish(app,kind):
     if kind in ("gainers","trending"):
-        body=highlight_text(kind,await get_rows())
-        image_path = await download_highlight_image(kind)
+        rows=await get_rows()
+        image_path=await download_highlight_image(kind, rows)
         try:
-            caption=("🐋 WHALESCOIN · " + ("TOP GAINERS" if kind == "gainers" else "TOP TRENDING")
-                     + "\n\n" + shayari() + "\n\nSource: WhalesCoin website.")
+            from market_image import build_caption
+            caption=build_caption(kind, rows, os.getenv("TIMEZONE","Asia/Kolkata"))
             with open(image_path, "rb") as photo:
                 await app.bot.send_photo(chat_id=CHANNEL, photo=photo, caption=caption)
-            log.info("Published live %s image downloaded from WhalesCoin", kind)
+            log.info("Published code-generated %s Top 5 image", kind)
         finally:
             if os.path.exists(image_path):
                 os.unlink(image_path)
     else:
         await app.bot.send_message(chat_id=CHANNEL,text=(await commentary(kind))[:4000],disable_web_page_preview=True)
+
 async def scheduled(context):
     index=context.job.data["index"]
     kind=CATEGORIES[index%4]
@@ -216,23 +186,24 @@ async def group_banner(u,c,kind):
     if not in_group(u):return
     image_path=None
     try:
-        image_path=await download_highlight_image(kind)
+        rows=await get_rows()
+        image_path=await download_highlight_image(kind, rows)
+        from market_image import build_caption
+        caption=build_caption(kind, rows, os.getenv("TIMEZONE","Asia/Kolkata"))
         with open(image_path,"rb") as photo:
-            msg=await u.effective_message.reply_photo(
-                photo=photo,
-                caption="🐋 WHALESCOIN · "+("TOP GAINERS" if kind=="gainers" else "TOP TRENDING")+"\n\n"+shayari()
-            )
+            msg=await u.effective_message.reply_photo(photo=photo,caption=caption)
         c.application.create_task(delete_later(c.bot,msg.chat_id,msg.message_id))
         c.application.create_task(delete_later(c.bot,u.effective_message.chat_id,u.effective_message.message_id))
     except Exception:
-        log.exception("%s website image download failed",kind)
+        log.exception("%s generated image failed",kind)
         try:
-            await temp_reply(u,c,"WhalesCoin image is temporarily unavailable. Please try again later.")
+            await temp_reply(u,c,"Market image is temporarily unavailable. Please try again later.")
         except Exception:
             log.exception("Could not send image failure reply")
     finally:
         if image_path and os.path.exists(image_path):
             os.unlink(image_path)
+
 async def gainers_cmd(u,c): await group_banner(u,c,"gainers")
 async def trending_cmd(u,c): await group_banner(u,c,"trending")
 async def start_cmd(u,c):
