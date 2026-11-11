@@ -195,7 +195,7 @@ async def publish(app,kind):
         image_path = await download_highlight_image(kind)
         try:
             caption=("🐋 WHALESCOIN · " + ("TOP GAINERS" if kind == "gainers" else "TOP TRENDING")
-                     + "\\n\\n" + shayari() + "\\n\\nSource: WhalesCoin website.")
+                     + "\n\n" + shayari() + "\n\nSource: WhalesCoin website.")
             with open(image_path, "rb") as photo:
                 await app.bot.send_photo(chat_id=CHANNEL, photo=photo, caption=caption)
             log.info("Published live %s image downloaded from WhalesCoin", kind)
