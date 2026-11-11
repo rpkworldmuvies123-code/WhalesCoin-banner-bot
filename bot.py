@@ -19,14 +19,15 @@ POST_INTERVAL_HOURS=int(os.getenv("POST_INTERVAL_HOURS","3"))
 HTTP=requests.Session()
 HTTP.headers.update({"User-Agent":"WhalesCoinTelegramBot/1.0"})
 SHAYARI=[
-"बाजार की चाल बदलती रहे, हौसला अपनी जगह रखो; हर candle को किस्मत नहीं, समझदारी से पढ़ो।",
-"लहरें ऊँची हों तो नाव संभालकर चलाना; क्रिप्टो की दुनिया में पहले सीखना, फिर कदम बढ़ाना।",
-"नफा हो या नुकसान, सब्र का साथ निभाना; हर चमकता coin सोना नहीं—पहले data समझ जाना।",
-"समय की लहरों पर हर सिक्का ऊपर-नीचे जाता है; जो जोखिम समझकर चलता है, वही टिक पाता है।",
-"ख्वाब बड़े रखो, मगर हिसाब भी साफ रखना; बाजार में उतरना तो जोखिम का जवाब भी साथ रखना।",
-"हर गिरावट कहानी है, हर उछाल इशारा; बिना जांचे मत करना कभी कोई फैसला हमारा।",
-"दाम बदलें पल-पल, उसूल न बदलने देना; लालच के शोर में अपना विवेक न खोने देना।",
-"बाजार की खबर को पहले परख लेना जनाब; सिर्फ शोर से नहीं बनता सही कारोबार का हिसाब।"]
+"Markets may rise and markets may fall; patience and research matter most of all.",
+"Read the trend, manage the risk, and never let excitement make the decision.",
+"Green candles bring hope, red candles test your plan; discipline matters more than a lucky span.",
+"Every coin has a story to show; check the facts before you go.",
+"Do not chase every shining name; protect your capital, stay in the game.",
+"Prices move fast, but wisdom takes time; make each decision with reason in mind.",
+"Let data guide your way, not fear or greed that fades away.",
+"Big moves attract the crowd; a clear plan speaks louder than the noise."
+]
 CATEGORIES=["market","analysis","gainers","trending"]
 
 def shayari(): return random.choice(SHAYARI)
@@ -52,18 +53,18 @@ def compact(v):
         if abs(v)>=n:return f"${v/n:.2f}{s}"
     return f"${v:,.0f}"
 def price_text(rows):
-    lines=["🪙 TOP 50 CRYPTOCURRENCIES · USD","Rank  Coin       Price           24h"]
+    lines=["🐋 WHALESCOIN · TOP 50 CRYPTOCURRENCIES · USD","Rank  Coin       Price           24h"]
     for x in rows:
         ch=x["change"]; pct="N/A" if ch is None else f"{ch:+.2f}%"
         lines.append(f'{x["rank"]:>2}. {x["symbol"][:8]:<8} {money(x["price"]):>13} {pct:>9}')
-    lines.append("\n"+shayari()+"\nSource: CoinPaprika public market data · Not investment advice.")
+    lines.append("\n"+shayari()+"\nNot financial advice.")
     return "\n".join(lines)
 def coin_detail(symbol,rows):
     x=next((z for z in rows if z["symbol"].lower()==symbol.lower()),None)
     if not x:return None
     ch=x["change"]; pct="N/A" if ch is None else f"{ch:+.2f}%"
     return (f'{x["name"]} ({x["symbol"]})\nRank: #{x["rank"]}\nPrice: {money(x["price"])}\n24h change: {pct}\n'
-      f'Market cap: {compact(x["market_cap"])}\n24h volume: {compact(x["volume"])}\nSource: CoinPaprika · Not investment advice.')
+      f'Market cap: {compact(x["market_cap"])}\n24h volume: {compact(x["volume"])}\nNot financial advice.')
 async def get_rows(): return await asyncio.to_thread(get_tickers)
 async def delete_later(bot,chat_id,message_id):
     await asyncio.sleep(DELETE_SECONDS)
@@ -103,10 +104,10 @@ async def market_cmd(u,c):
     if not in_group(u):return
     try:
         g=await asyncio.to_thread(api_get,"/global")
-        text=(f"🌐 CRYPTO MARKET OVERVIEW\nMarket cap: {compact(g.get('market_cap_usd'))}\n"
+        text=(f"🐋 WHALESCOIN · CRYPTO MARKET OVERVIEW\nMarket cap: {compact(g.get('market_cap_usd'))}\n"
           f"24h volume: {compact(g.get('volume_24h_usd'))}\nBTC dominance: {g.get('bitcoin_dominance_percentage','N/A')}%\n"
           f"Active cryptocurrencies: {g.get('cryptocurrencies_number','N/A')}\n\n{shayari()}\n"
-          "Source: CoinPaprika · Snapshot, not financial advice.")
+          "Snapshot · Not financial advice.")
         await temp_reply(u,c,text)
     except Exception:
         log.exception("Global market failed"); await temp_reply(u,c,"Global market data temporarily unavailable.")
@@ -114,15 +115,15 @@ def highlight_text(kind, rows):
     valid=[x for x in rows if x["change"] is not None]
     if kind=="gainers":
         chosen=sorted(valid,key=lambda x:x["change"],reverse=True)[:10]
-        heading="🚀 TOP GAINERS · 24H"
+        heading="🐋 WHALESCOIN · TOP GAINERS · 24H"
     else:
         chosen=sorted(rows,key=lambda x:(x["volume"] or 0),reverse=True)[:10]
-        heading="🔥 TOP TRENDING BY 24H VOLUME"
+        heading="🐋 WHALESCOIN · TOP TRENDING"
     lines=[heading]
     for i,x in enumerate(chosen,1):
         change="N/A" if x["change"] is None else f'{x["change"]:+.2f}%'
         lines.append(f'{i}. {x["name"]} ({x["symbol"]}) · {money(x["price"])} · 24h {change}')
-    lines.extend(["",shayari(),"Source: CoinPaprika public market data · Not investment advice."])
+    lines.extend(["",shayari(),"Not financial advice."])
     return "\n".join(lines)
 async def commentary(kind):
     rows=await get_rows()
@@ -130,15 +131,15 @@ async def commentary(kind):
     up=sum(x["change"]>0 for x in rows if x["change"] is not None)
     down=sum(x["change"]<0 for x in rows if x["change"] is not None)
     if kind=="market":
-        body=(f"🌐 MARKET UPDATE\nTop 50 snapshot: {up} assets positive, {down} negative over 24h.\n"
+        body=(f"🐋 WHALESCOIN · MARKET UPDATE\nTop 50 snapshot: {up} assets positive, {down} negative over 24h.\n"
           f"Strongest mover: {movers[0]['name']} ({movers[0]['change']:+.2f}%).\n"
           f"Weakest mover: {movers[-1]['name']} ({movers[-1]['change']:+.2f}%).")
     else:
-        body=(f"📊 TRADING ANALYSIS · MARKET SNAPSHOT\nTop 50: {up} assets positive and {down} negative over 24h.\n"
+        body=(f"🐋 WHALESCOIN · TRADING ANALYSIS\nTop 50: {up} assets positive and {down} negative over 24h.\n"
           f"Top positive mover: {movers[0]['name']} ({movers[0]['change']:+.2f}%).\n"
           f"Top negative mover: {movers[-1]['name']} ({movers[-1]['change']:+.2f}%).\n"
           "24-hour market snapshot only; not chart-based technical analysis or a trade signal.")
-    return body+"\n\n"+shayari()+"\n\nData: CoinPaprika · Not financial advice."
+    return body+"\n\n"+shayari()+"\n\nData snapshot · Not financial advice."
 async def publish(app,kind):
     if kind in ("gainers","trending"):
         body=highlight_text(kind,await get_rows())
