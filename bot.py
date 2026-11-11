@@ -156,7 +156,7 @@ async def download_highlight_image(kind):
             response = await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             if response and response.status >= 400:
                 raise RuntimeError(f"WhalesCoin page returned HTTP {response.status}")
-            await page.wait_for_load_state("networkidle", timeout=20000)
+            await page.wait_for_timeout(3000)
             # First open the site's own share/export panel.
             share = page.get_by_text("Share Top Coins", exact=False).first
             await share.wait_for(state="visible", timeout=20000)
