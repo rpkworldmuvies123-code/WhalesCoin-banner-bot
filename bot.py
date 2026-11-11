@@ -46,14 +46,14 @@ def get_tickers():
     return sorted(rows,key=lambda x:x["rank"])[:50]
 def money(v):
     if v is None:return "N/A"
-    if abs(v)>=1:return f"\${v:,.2f}"
-    if abs(v)>=.01:return f"\${v:.4f}"
-    return f"\${v:.8f}"
+    if abs(v)>=1:return f"${v:,.2f}"
+    if abs(v)>=.01:return f"${v:.4f}"
+    return f"${v:.8f}"
 def compact(v):
     if v is None:return "N/A"
     for n,s in ((1e12,"T"),(1e9,"B"),(1e6,"M"),(1e3,"K")):
-        if abs(v)>=n:return f"\${v/n:.2f}{s}"
-    return f"\${v:,.0f}"
+        if abs(v)>=n:return f"${v/n:.2f}{s}"
+    return f"${v:,.0f}"
 def price_text(rows):
     lines=["🪙 TOP 50 CRYPTOCURRENCIES · USD","Rank  Coin       Price           24h"]
     for x in rows:
