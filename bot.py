@@ -59,7 +59,7 @@ def price_text(rows):
     for x in rows:
         ch=x["change"]; pct="N/A" if ch is None else f"{ch:+.2f}%"
         lines.append(f'{x["rank"]:>2}. {x["symbol"][:8]:<8} {money(x["price"]):>13} {pct:>9}')
-    lines.append("\nSource: CoinPaprika public market data · Not investment advice.")
+    lines.append("\n"+shayari()+"\nSource: CoinPaprika public market data · Not investment advice.")
     return "\n".join(lines)
 def coin_detail(symbol,rows):
     x=next((z for z in rows if z["symbol"].lower()==symbol.lower()),None)
