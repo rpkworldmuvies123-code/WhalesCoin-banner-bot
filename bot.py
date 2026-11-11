@@ -123,7 +123,7 @@ def highlight_text(kind, rows):
         change="N/A" if x["change"] is None else f'{x["change"]:+.2f}%'
         lines.append(f'{i}. {x["name"]} ({x["symbol"]}) · {money(x["price"])} · 24h {change}')
     lines.extend(["",shayari(),"Source: CoinPaprika public market data · Not investment advice."])
-    return "\\n".join(lines)
+    return "\n".join(lines)
 async def commentary(kind):
     rows=await get_rows()
     movers=sorted([x for x in rows if x["change"] is not None],key=lambda x:x["change"],reverse=True)
