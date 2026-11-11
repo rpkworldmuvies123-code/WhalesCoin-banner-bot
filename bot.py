@@ -1,244 +1,187 @@
-import os, json, base64, logging, asyncio, re
+import os, re, random, asyncio, logging, tempfile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-
 import requests
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from PIL import Image
+from playwright.async_api import async_playwright
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-log = logging.getLogger("whalescoin-bot")
+logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log=logging.getLogger("whalescoin-auto")
+TZ=ZoneInfo(os.getenv("TIMEZONE","Asia/Kolkata"))
+TOKEN=os.getenv("TELEGRAM_BOT_TOKEN","").strip()
+CHANNEL=os.getenv("TARGET_CHANNEL","").strip()
+GROUP_ID=os.getenv("GROUP_ID","").strip() or None
+GAINERS_URL=os.getenv("GAINERS_URL","https://whalescoin.io/market-highlights/gainers")
+TRENDING_URL=os.getenv("TRENDING_URL","https://whalescoin.io/market-highlights/trending")
+DELETE_SECONDS=int(os.getenv("DELETE_SECONDS","5"))
+POST_INTERVAL_HOURS=int(os.getenv("POST_INTERVAL_HOURS","3"))
+HTTP=requests.Session()
+HTTP.headers.update({"User-Agent":"WhalesCoinTelegramBot/1.0"})
+SHAYARI=[
+"बाजार की चाल बदलती रहे, हौसला अपनी जगह रखो; हर candle को किस्मत नहीं, समझदारी से पढ़ो।",
+"लहरें ऊँची हों तो नाव संभालकर चलाना; क्रिप्टो की दुनिया में पहले सीखना, फिर कदम बढ़ाना।",
+"नफा हो या नुकसान, सब्र का साथ निभाना; हर चमकता coin सोना नहीं—पहले data समझ जाना।",
+"समय की लहरों पर हर सिक्का ऊपर-नीचे जाता है; जो जोखिम समझकर चलता है, वही टिक पाता है।",
+"ख्वाब बड़े रखो, मगर हिसाब भी साफ रखना; बाजार में उतरना तो जोखिम का जवाब भी साथ रखना।",
+"हर गिरावट कहानी है, हर उछाल इशारा; बिना जांचे मत करना कभी कोई फैसला हमारा।",
+"दाम बदलें पल-पल, उसूल न बदलने देना; लालच के शोर में अपना विवेक न खोने देना।",
+"बाजार की खबर को पहले परख लेना जनाब; सिर्फ शोर से नहीं बनता सही कारोबार का हिसाब।"]
+CATEGORIES=["market","analysis","gainers","trending"]
 
-ROOT = Path(__file__).parent
-ASSETS = ROOT / "assets"
-OUT = ROOT / "generated"
-OUT.mkdir(exist_ok=True)
-LOGO = ASSETS / "whalescoin_logo.jpg"
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
-IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image")
-IMAGE_SIZE = os.getenv("IMAGE_SIZE", "2K")
-ADMIN_IDS = {int(x.strip()) for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip().isdigit()}
-ADMIN_NAMES = {x.strip().lstrip("@").lower() for x in os.getenv("ADMIN_USERNAMES", "DesignerPlusDev").split(",") if x.strip()}
-CHANNELS = [x.strip() for x in os.getenv("TARGET_CHANNELS", "@WhalesCoinTalks,@WhalesCoinGlobal").split(",") if x.strip()]
-TZ = ZoneInfo("Asia/Dhaka")
-
-# In-memory drafts are intentionally cleared on restart; publish only after an explicit /post.
-drafts = []
-
-
-def is_admin(update: Update) -> bool:
-    user = update.effective_user
-    if not user:
-        return False
-    return user.id in ADMIN_IDS or (user.username or "").lower() in ADMIN_NAMES
-
-async def guard(update: Update) -> bool:
-    if not is_admin(update):
-        if update.effective_message:
-            await update.effective_message.reply_text("Access denied. This bot is restricted to its configured administrators.")
-        return False
-    return True
-
-
-def gemini_text(prompt: str) -> str:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{TEXT_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.9, "responseMimeType": "application/json"}}
-    r = requests.post(url, json=payload, timeout=120)
-    r.raise_for_status()
-    data = r.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"]
-
-
-def make_content(count: int):
-    prompt = f'''You are the creative director for WhalesCoin, a crypto/blockchain brand targeting an English-speaking Bangladesh audience. Create exactly {count} DISTINCT evergreen promotional banner concepts.
-Return ONLY valid JSON: {{"banners":[{{"headline":"...","supporting_text":"...","caption":"...","hashtags":["..."] ,"visual_direction":"..."}}]}}.
-Rules: English only; concise, polished global crypto-brand voice; themes may include blockchain community, digital ocean, education, technology, community participation, brand awareness. Do NOT invent exchange listings, partnerships, endorsements, token prices, returns, dates, events, product features, regulatory status, or other factual claims. No investment promises, guaranteed profit, or financial advice. Avoid repeating concepts. Each visual_direction must describe a clearly different composition and palette while retaining WhalesCoin identity (deep navy/black, electric blue/cyan, restrained silver/white).'''
-    raw = gemini_text(prompt)
-    # tolerate accidental markdown fences
-    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.I)
-    obj = json.loads(raw)
-    banners = obj.get("banners", [])
-    if len(banners) < count:
-        raise RuntimeError(f"Gemini returned {len(banners)} concepts; expected {count}. Try /generate again.")
-    return banners[:count]
-
-
-def generate_image(concept: dict, index: int) -> Path:
-    logo_bytes = LOGO.read_bytes()
-    prompt = f'''Create ONE premium, polished, original cryptocurrency brand marketing banner for WhalesCoin.
-Canvas: exact 16:9 landscape, designed for Telegram channel publishing. Generate a 2K image.
-Brand identity: use the supplied WhalesCoin logo image as the exact brand mark; preserve its icon and wordmark, do not redraw, distort, misspell, or invent a replacement logo. Integrate it cleanly and legibly.
-Exact headline text to render: {concept['headline']}
-Exact supporting text to render: {concept['supporting_text']}
-Visual direction: {concept['visual_direction']}
-Art direction: sophisticated agency-level art direction, cinematic 3D blockchain/ocean visual language where appropriate, strong typography hierarchy, high contrast, precise spacing, clean composition, premium lighting, no clutter, no fake exchange logos, no extra brand names, no fabricated statistics, no watermarks, no UI mockups. English text only. Make all text readable and spell it exactly. Avoid any investment/price/return claims.'''
-    url = "https://generativelanguage.googleapis.com/v1beta/interactions"
-    payload = {
-        "model": IMAGE_MODEL,
-        "input": [
-            {"type": "text", "text": prompt},
-            {"type": "image", "data": base64.b64encode(logo_bytes).decode("ascii"), "mime_type": "image/jpeg"},
-        ],
-        "response_format": {"type": "image", "aspect_ratio": "16:9", "image_size": IMAGE_SIZE},
-    }
-    r = requests.post(url, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}, json=payload, timeout=300)
-    r.raise_for_status()
-    data = r.json()
-    image_data = None
-    # Interactions responses contain output_image or image blocks in output/steps.
-    if isinstance(data.get("output_image"), dict):
-        image_data = data["output_image"].get("data")
-    if not image_data:
-        for step in data.get("steps", []):
-            block = step.get("image") or step.get("output_image")
-            if isinstance(block, dict) and block.get("data"):
-                image_data = block["data"]
-                break
-            for part in step.get("content", []) if isinstance(step.get("content"), list) else []:
-                if isinstance(part, dict) and part.get("type") == "image" and part.get("data"):
-                    image_data = part["data"]
-                    break
-            if image_data:
-                break
-    if not image_data:
-        raise RuntimeError("Gemini returned no image. Check API access/model availability and try again.")
-    path = OUT / f"whalescoin_{datetime.now(TZ).strftime('%Y%m%d_%H%M%S')}_{index}.png"
-    path.write_bytes(base64.b64decode(image_data))
-    # Normalize to an exact 16:9 canvas; keep the generated art centered.
-    with Image.open(path) as im:
-        im = im.convert("RGB")
-        target_ratio = 16 / 9
-        w, h = im.size
-        if w / h > target_ratio:
-            nw = int(h * target_ratio); left = (w - nw) // 2
-            im = im.crop((left, 0, left + nw, h))
-        else:
-            nh = int(w / target_ratio); top = (h - nh) // 2
-            im = im.crop((0, top, w, top + nh))
-        im = im.resize((1920, 1080), Image.Resampling.LANCZOS)
-        im.save(path, "PNG", optimize=True)
-    return path
-
-
-def caption_for(item: dict) -> str:
-    tags = " ".join("#" + re.sub(r"[^A-Za-z0-9_]", "", str(t)).lstrip("#") for t in item.get("hashtags", [])[:8])
-    caption = f"{item.get('headline','WhalesCoin')}\n\n{item.get('caption','')}\n\n{tags}".strip()
-    return caption[:1024]
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await guard(update): return
-    await update.message.reply_text("WhalesCoin Banner Studio is ready.\n\n/generate [2|3] — create banners\n/preview — resend current previews\n/post — publish approved drafts to both channels\n/cancel — discard drafts\n/status — configuration status\n/help — command list\n\nPublishing is never automatic; use /post when you approve the previews.")
-
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await start(update, context)
-
-async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global drafts
-    if not await guard(update): return
-    if not GEMINI_API_KEY:
-        await update.message.reply_text("GEMINI_API_KEY is missing. Add it to the .env file and restart the bot."); return
-    count = 3
-    if context.args:
-        try: count = int(context.args[0])
-        except ValueError: count = 0
-    if count not in (2, 3):
-        await update.message.reply_text("Usage: /generate or /generate 2 or /generate 3"); return
-    await update.message.reply_text(f"Creating {count} WhalesCoin banner concepts and images. This may take a few minutes…")
+def shayari(): return random.choice(SHAYARI)
+def api_get(path,params=None,timeout=35):
+    r=HTTP.get("https://api.coinpaprika.com/v1"+path,params=params,timeout=timeout); r.raise_for_status(); return r.json()
+def get_tickers():
+    data=api_get("/tickers",{"quotes":"USD"})
+    rows=[]
+    for x in data:
+        q=(x.get("quotes") or {}).get("USD") or {}
+        if not x.get("rank") or not q.get("price"): continue
+        rows.append({"rank":x["rank"],"name":x.get("name","?"),"symbol":x.get("symbol","?"),"price":q.get("price"),
+          "change":q.get("percent_change_24h"),"market_cap":q.get("market_cap"),"volume":q.get("volume_24h")})
+    return sorted(rows,key=lambda x:x["rank"])[:50]
+def money(v):
+    if v is None:return "N/A"
+    if abs(v)>=1:return f"\${v:,.2f}"
+    if abs(v)>=.01:return f"\${v:.4f}"
+    return f"\${v:.8f}"
+def compact(v):
+    if v is None:return "N/A"
+    for n,s in ((1e12,"T"),(1e9,"B"),(1e6,"M"),(1e3,"K")):
+        if abs(v)>=n:return f"\${v/n:.2f}{s}"
+    return f"\${v:,.0f}"
+def price_text(rows):
+    lines=["🪙 TOP 50 CRYPTOCURRENCIES · USD","Rank  Coin       Price           24h"]
+    for x in rows:
+        ch=x["change"]; pct="N/A" if ch is None else f"{ch:+.2f}%"
+        lines.append(f'{x["rank"]:>2}. {x["symbol"][:8]:<8} {money(x["price"]):>13} {pct:>9}')
+    lines.append("\nSource: CoinPaprika public market data · Not investment advice.")
+    return "\n".join(lines)
+def coin_detail(symbol,rows):
+    x=next((z for z in rows if z["symbol"].lower()==symbol.lower()),None)
+    if not x:return None
+    ch=x["change"]; pct="N/A" if ch is None else f"{ch:+.2f}%"
+    return (f'{x["name"]} ({x["symbol"]})\nRank: #{x["rank"]}\nPrice: {money(x["price"])}\n24h change: {pct}\n'
+      f'Market cap: {compact(x["market_cap"])}\n24h volume: {compact(x["volume"])}\nSource: CoinPaprika · Not investment advice.')
+async def get_rows(): return await asyncio.to_thread(get_tickers)
+async def delete_later(bot,chat_id,message_id):
+    await asyncio.sleep(DELETE_SECONDS)
+    try: await bot.delete_message(chat_id=chat_id,message_id=message_id)
+    except Exception as e: log.info("Deletion failed (check bot admin permissions): %s",e)
+async def temp_reply(update,context,text):
+    msg=update.effective_message
+    sent=await msg.reply_text(text)
+    context.application.create_task(delete_later(context.bot,sent.chat_id,sent.message_id))
+    context.application.create_task(delete_later(context.bot,msg.chat_id,msg.message_id))
+def in_group(update):
+    m=update.effective_message
+    return bool(m and m.chat.type in ("group","supergroup") and (not GROUP_ID or str(m.chat_id)==GROUP_ID))
+async def price_cmd(u,c):
+    if not in_group(u):return
     try:
-        concepts = await asyncio.to_thread(make_content, count)
-        new_drafts = []
-        for i, concept in enumerate(concepts, 1):
-            await update.message.reply_text(f"Generating banner {i}/{count}…")
-            path = await asyncio.to_thread(generate_image, concept, i)
-            new_drafts.append({"path": str(path), "caption": caption_for(concept)})
-        drafts = new_drafts
-        await update.message.reply_text(f"Done. {len(drafts)} banner(s) are ready. Review them below; nothing has been published.")
-        for i, item in enumerate(drafts, 1):
-            with open(item["path"], "rb") as photo:
-                await update.message.reply_photo(photo=photo, caption=f"PREVIEW {i}/{len(drafts)}\n\n{item['caption']}")
-        await update.message.reply_text("If approved, send /post. To discard these drafts, send /cancel.")
-    except Exception as e:
-        log.exception("Generation failed")
-        await update.message.reply_text(f"Generation failed: {str(e)[:700]}\nCheck API key, billing/quota, and model access. No channel post was made.")
-
-async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await guard(update): return
-    if not drafts:
-        await update.message.reply_text("No drafts available. Use /generate first."); return
-    for i, item in enumerate(drafts, 1):
-        with open(item["path"], "rb") as photo:
-            await update.message.reply_photo(photo=photo, caption=f"PREVIEW {i}/{len(drafts)}\n\n{item['caption']}")
-
-async def post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await guard(update): return
-    if not drafts:
-        await update.message.reply_text("No drafts to publish. Use /generate first."); return
-    if not CHANNELS:
-        await update.message.reply_text("No target channels configured in TARGET_CHANNELS."); return
-    await update.message.reply_text("Publishing approved banners to configured channels…")
-    successes, failures = [], []
-    for channel in CHANNELS:
-        for i, item in enumerate(drafts, 1):
-            try:
-                with open(item["path"], "rb") as photo:
-                    await context.bot.send_photo(chat_id=channel, photo=photo, caption=item["caption"])
-                successes.append(f"{channel}: banner {i}")
-            except Exception as e:
-                log.exception("Post failed for %s", channel)
-                failures.append(f"{channel}, banner {i}: {str(e)[:180]}")
-    msg = "Publish finished.\n\nSuccessful:\n" + ("\n".join(successes) if successes else "None")
-    if failures: msg += "\n\nFailed:\n" + "\n".join(failures)
-    await update.message.reply_text(msg[:4000])
-    if not failures:
-        drafts.clear()
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await guard(update): return
-    drafts.clear()
-    await update.message.reply_text("All pending drafts have been discarded. Nothing was published.")
-
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await guard(update): return
-    await update.message.reply_text(
-        "WhalesCoin Banner Studio\n"
-        f"Text model: {TEXT_MODEL}\nImage model: {IMAGE_MODEL}\nImage size: {IMAGE_SIZE}\n"
-        f"Audience language: English | Target timezone: Asia/Dhaka\n"
-        f"Pending drafts: {len(drafts)}\nTargets: {', '.join(CHANNELS)}\n"
-        "Publishing mode: manual approval only"
-    )
-
-async def post_init(app: Application):
-    await app.bot.set_my_commands([
-        ("start", "Open WhalesCoin Banner Studio"),
-        ("generate", "Generate 2 or 3 banner previews"),
-        ("preview", "Show pending banner previews"),
-        ("post", "Publish approved banners to channels"),
-        ("cancel", "Discard pending banners"),
-        ("status", "Show bot configuration"),
-        ("help", "Show commands"),
-    ])
-
+        body=price_text(await get_rows())
+        for chunk in [body[i:i+3500] for i in range(0,len(body),3500)]:
+            await temp_reply(u,c,chunk)
+    except Exception:
+        log.exception("Top 50 failed"); await temp_reply(u,c,"Market data temporarily unavailable. Please try again.")
+async def coin_cmd(u,c,symbol):
+    if not in_group(u):return
+    try:
+        detail=coin_detail(symbol,await get_rows()) or f"{symbol} is not in the current Top 50 feed."
+        await temp_reply(u,c,detail+"\n\n"+shayari())
+    except Exception:
+        log.exception("Coin lookup failed"); await temp_reply(u,c,"Coin data temporarily unavailable.")
+async def btc_cmd(u,c): await coin_cmd(u,c,"BTC")
+async def eth_cmd(u,c): await coin_cmd(u,c,"ETH")
+async def market_cmd(u,c):
+    if not in_group(u):return
+    try:
+        g=await asyncio.to_thread(api_get,"/global")
+        text=(f"🌐 CRYPTO MARKET OVERVIEW\nMarket cap: {compact(g.get('market_cap_usd'))}\n"
+          f"24h volume: {compact(g.get('volume_24h_usd'))}\nBTC dominance: {g.get('bitcoin_dominance_percentage','N/A')}%\n"
+          f"Active cryptocurrencies: {g.get('cryptocurrencies_number','N/A')}\n\n{shayari()}\n"
+          "Source: CoinPaprika · Snapshot, not financial advice.")
+        await temp_reply(u,c,text)
+    except Exception:
+        log.exception("Global market failed"); await temp_reply(u,c,"Global market data temporarily unavailable.")
+async def website_banner(url,kind):
+    # Website's own Share Top Coins -> Download Image workflow. Fail closed if UI changes.
+    async with async_playwright() as p:
+        browser=await p.chromium.launch(headless=True,args=["--no-sandbox","--disable-dev-shm-usage"])
+        page=await browser.new_page(viewport={"width":1440,"height":1100})
+        try:
+            await page.goto(url,wait_until="domcontentloaded",timeout=60000)
+            await page.get_by_text(re.compile(r"SHARE TOP COINS",re.I)).first.click(timeout=30000)
+            button=page.get_by_text(re.compile(r"DOWNLOAD IMAGE",re.I)).first
+            await button.wait_for(state="visible",timeout=30000)
+            async with page.expect_download(timeout=30000) as info: await button.click()
+            download=await info.value
+            path=Path(tempfile.gettempdir())/f"whalescoin_{kind}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.png"
+            await download.save_as(str(path))
+            if not path.exists() or path.stat().st_size<10000: raise RuntimeError("Downloaded banner is empty/too small.")
+            return path
+        finally: await browser.close()
+async def commentary(kind):
+    rows=await get_rows()
+    movers=sorted([x for x in rows if x["change"] is not None],key=lambda x:x["change"],reverse=True)
+    up=sum(x["change"]>0 for x in rows if x["change"] is not None)
+    down=sum(x["change"]<0 for x in rows if x["change"] is not None)
+    if kind=="market":
+        body=(f"🌐 MARKET UPDATE\nTop 50 snapshot: {up} assets positive, {down} negative over 24h.\n"
+          f"Strongest mover: {movers[0]['name']} ({movers[0]['change']:+.2f}%).\n"
+          f"Weakest mover: {movers[-1]['name']} ({movers[-1]['change']:+.2f}%).")
+    else:
+        body=(f"📊 TRADING ANALYSIS · MARKET SNAPSHOT\nTop 50: {up} assets positive and {down} negative over 24h.\n"
+          f"Top positive mover: {movers[0]['name']} ({movers[0]['change']:+.2f}%).\n"
+          f"Top negative mover: {movers[-1]['name']} ({movers[-1]['change']:+.2f}%).\n"
+          "24-hour market snapshot only; not chart-based technical analysis or a trade signal.")
+    return body+"\n\n"+shayari()+"\n\nData: CoinPaprika · Not financial advice."
+async def publish(app,kind):
+    if kind in ("gainers","trending"):
+        url=GAINERS_URL if kind=="gainers" else TRENDING_URL
+        path=await website_banner(url,kind)
+        caption=("🚀 TOP GAINERS · WhalesCoin market highlights" if kind=="gainers" else "🔥 TOP TRENDING · WhalesCoin market highlights")
+        caption+="\n\n"+shayari()+"\n\n"+url
+        try:
+            with path.open("rb") as f: await app.bot.send_photo(chat_id=CHANNEL,photo=f,caption=caption[:1024])
+        finally:path.unlink(missing_ok=True)
+    else: await app.bot.send_message(chat_id=CHANNEL,text=(await commentary(kind))[:4000],disable_web_page_preview=True)
+async def scheduled(context):
+    index=context.job.data["index"]
+    kind=CATEGORIES[index%4]
+    try:
+        await publish(context.application,kind)
+        log.info("Published scheduled category %s",kind)
+    except Exception: log.exception("Scheduled %s failed; skipped safely",kind)
+    context.job.data["index"]=(index+1)%8
+async def group_banner(u,c,url,kind):
+    if not in_group(u):return
+    try:
+        p=await website_banner(url,kind)
+        with p.open("rb") as f: sent=await u.effective_message.reply_photo(photo=f,caption=f"{kind.title()} · WhalesCoin\n\n"+shayari())
+        c.application.create_task(delete_later(c.bot,sent.chat_id,sent.message_id))
+        c.application.create_task(delete_later(c.bot,u.effective_chat.id,u.effective_message.message_id))
+        p.unlink(missing_ok=True)
+    except Exception:
+        log.exception("%s banner failed",kind); await temp_reply(u,c,"WhalesCoin banner is temporarily unavailable.")
+async def gainers_cmd(u,c): await group_banner(u,c,GAINERS_URL,"gainers")
+async def trending_cmd(u,c): await group_banner(u,c,TRENDING_URL,"trending")
+async def start_cmd(u,c):
+    if in_group(u): await temp_reply(u,c,"WhalesCoin Market Bot ready.\n/price /btc /eth /market /gainers /trending")
+async def post_init(app):
+    app.job_queue.run_repeating(scheduled,interval=POST_INTERVAL_HOURS*3600,first=30,
+      data={"index":0},name="whalescoin-3-hour-cycle")
 def main():
-    if not TELEGRAM_BOT_TOKEN:
-        raise SystemExit("TELEGRAM_BOT_TOKEN is missing. Copy .env.example to .env and configure it.")
-    if not LOGO.exists():
-        raise SystemExit("Brand logo missing: assets/whalescoin_logo.jpg")
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("generate", generate))
-    app.add_handler(CommandHandler("preview", preview))
-    app.add_handler(CommandHandler("post", post))
-    app.add_handler(CommandHandler("cancel", cancel))
-    app.add_handler(CommandHandler("status", status))
-    log.info("WhalesCoin Banner Studio starting")
+    if not TOKEN:raise SystemExit("Missing TELEGRAM_BOT_TOKEN")
+    if not CHANNEL:raise SystemExit("Missing TARGET_CHANNEL")
+    app=Application.builder().token(TOKEN).post_init(post_init).build()
+    for name,fn in [("start",start_cmd),("price",price_cmd),("btc",btc_cmd),("eth",eth_cmd),
+      ("market",market_cmd),("gainers",gainers_cmd),("trending",trending_cmd)]:
+        app.add_handler(CommandHandler(name,fn))
+    log.info("WhalesCoin bot starting. One post every %s hours.",POST_INTERVAL_HOURS)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    main()
+if __name__=="__main__":main()
