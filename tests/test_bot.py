@@ -26,7 +26,7 @@ class BotLogicTests(unittest.TestCase):
     def test_trending_is_explicitly_volume_ranked(self):
         text = bot.highlight_text("trending", SAMPLE)
         self.assertLess(text.index("Ethereum"), text.index("Bitcoin"))
-        self.assertIn("24H VOLUME RANK", text)
+        self.assertIn("TOP 10 BY 24H VOLUME", text)
 
     def test_coin_detail_includes_price_and_change(self):
         detail = bot.coin_detail("BTC", SAMPLE)
