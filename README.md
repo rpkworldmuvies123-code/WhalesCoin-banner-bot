@@ -1,33 +1,32 @@
 # WhalesCoin Market & Banner Telegram Bot
 
-## Features
-- GitHub Actions publishes one channel post every 3 hours (8/day): Market Update, Trading Analysis, Top Gainers and Top Trending, each twice daily.
-- Gainers/Trending images are downloaded at posting time from WhalesCoin's own Share Top Coins -> Download Image UI using Playwright. If the website export fails, the workflow fails visibly; no fake image is sent.
+## Implemented
 - Group commands: /price (Top 50), /btc, /eth, /market, /analysis, /gainers, /trending.
-- Group command and reply messages are scheduled for deletion after 5 seconds. Bot must be group admin with Delete Messages permission.
-- CoinPaprika public API; no Gemini/OpenAI key required.
+- Replies and command messages are scheduled for deletion after 5 seconds. The bot must be group admin with Delete Messages permission.
+- CoinPaprika public market data; no Gemini/OpenAI key required.
 - Built-in English shayari pool.
+- Playwright code attempts the WhalesCoin website's own Share Top Coins -> Download Image flow for Gainers and Trending. It sends no fake/local placeholder image.
 
-## Free scheduled posting with GitHub Actions
-After merging this branch into `main`:
-1. Open repository Settings -> Secrets and variables -> Actions -> New repository secret.
-2. Add `TELEGRAM_BOT_TOKEN` with your BotFather token.
-3. Add `TARGET_CHANNEL` with the channel username (for example `@yourchannel`) or numeric channel ID.
-4. Add the bot as channel admin with Post Messages permission.
-5. Open Actions -> WhalesCoin scheduled channel posts -> Run workflow to test one post manually. Automatic schedule is every 3 hours.
+## Important blockers verified during testing
+- Android/Termux cannot run Playwright Chromium. The `Unsupported platform: android` error is expected.
+- GitHub-hosted Ubuntu runner reached the WhalesCoin page but received HTTP 403 and a Cloudflare "Just a moment..." page. The Share Top Coins control was therefore not accessible to automation. This means live website image downloading is NOT yet verified and scheduled image publishing must not be enabled on that runner.
+- A Linux VPS/worker may work only if WhalesCoin allows requests from that server's IP. Test the website export flow before enabling scheduled posts. Do not assume Render will bypass the 403.
 
-GitHub scheduled jobs can start late under GitHub load; this is not a guaranteed exact-to-the-minute scheduler. Workflow sends exactly one post per successful run. Check Actions logs if a post is skipped or fails.
+## Run the command bot
+Install Python 3.11+, then:
+```bash
+pip install -r requirements.txt
+export TELEGRAM_BOT_TOKEN="your_bot_token"
+export TARGET_CHANNEL="@your_channel"
+python bot.py
+```
+Optional: set `GROUP_ID` to restrict commands to one group. Keep the process running for commands to respond immediately. The bot's in-process channel scheduler is disabled by default to avoid duplicate posts.
 
-## Group commands
-Run `python bot.py` on a machine that stays online and add `TELEGRAM_BOT_TOKEN`, `TARGET_CHANNEL`, and optionally `GROUP_ID` to its environment. By default, in-process scheduled posting is disabled so it will not duplicate GitHub Actions posts. The bot must be a group admin with Delete Messages permission if it should delete users' commands. Keep this process running for commands to respond immediately.
+## Optional scheduler
+On a Linux host where the WhalesCoin Playwright export has been verified, set `ENABLE_SCHEDULER=true`. It starts 30 seconds after startup and posts every 3 hours. If image download fails, the scheduled post is skipped and logged. Do not enable this until the export test succeeds.
 
-## Android / Termux limitation
-Playwright's bundled Chromium does not run on Android/Termux. The error `Unsupported platform: android` is expected. GitHub Actions runs Chromium on Linux for scheduled posts. Termux can still run the command bot without browser automation, but it cannot download the site's image itself.
-
-## Optional Render Background Worker
-If using a paid always-on Render worker instead of GitHub scheduled posting, set `ENABLE_SCHEDULER=true` in its environment and disable the GitHub scheduled workflow to avoid duplicate posts. Build command: `pip install -r requirements.txt && playwright install --with-deps chromium`; start command: `python bot.py`.
-
-## Accuracy and operational notes
+## Accuracy and operations
 - Trading Analysis is a 24-hour market snapshot, not chart-indicator technical analysis or a trade signal.
-- CoinPaprika can rate-limit; failures are logged and no fabricated market data is posted.
-- Do not run two polling bot processes with the same token simultaneously; Telegram polling conflicts can occur.
+- CoinPaprika may rate-limit; failures are logged.
+- Do not run two polling processes with the same Telegram bot token simultaneously.
+- Channel posting requires bot admin permission; deleting group commands requires Delete Messages permission.
