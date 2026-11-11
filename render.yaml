@@ -16,6 +16,8 @@ services:
         value: Asia/Kolkata
       - key: POST_INTERVAL_HOURS
         value: "3"
+      - key: ENABLE_SCHEDULER
+        value: "true"
       - key: DELETE_SECONDS
         value: "5"
       - key: GAINERS_URL
