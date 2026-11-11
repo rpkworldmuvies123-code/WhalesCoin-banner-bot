@@ -1,12 +1,9 @@
-import os, re, random, asyncio, logging, tempfile
-from pathlib import Path
-from datetime import datetime, timezone
+import os, random, asyncio, logging
 from zoneinfo import ZoneInfo
 import requests
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from playwright.async_api import async_playwright
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL","INFO"),format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -113,23 +110,20 @@ async def market_cmd(u,c):
         await temp_reply(u,c,text)
     except Exception:
         log.exception("Global market failed"); await temp_reply(u,c,"Global market data temporarily unavailable.")
-async def website_banner(url,kind):
-    # Website's own Share Top Coins -> Download Image workflow. Fail closed if UI changes.
-    async with async_playwright() as p:
-        browser=await p.chromium.launch(headless=True,args=["--no-sandbox","--disable-dev-shm-usage"])
-        page=await browser.new_page(viewport={"width":1440,"height":1100})
-        try:
-            await page.goto(url,wait_until="domcontentloaded",timeout=60000)
-            await page.get_by_text(re.compile(r"SHARE TOP COINS",re.I)).first.click(timeout=30000)
-            button=page.get_by_text(re.compile(r"DOWNLOAD IMAGE",re.I)).first
-            await button.wait_for(state="visible",timeout=30000)
-            async with page.expect_download(timeout=30000) as info: await button.click()
-            download=await info.value
-            path=Path(tempfile.gettempdir())/f"whalescoin_{kind}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.png"
-            await download.save_as(str(path))
-            if not path.exists() or path.stat().st_size<10000: raise RuntimeError("Downloaded banner is empty/too small.")
-            return path
-        finally: await browser.close()
+def highlight_text(kind, rows):
+    valid=[x for x in rows if x["change"] is not None]
+    if kind=="gainers":
+        chosen=sorted(valid,key=lambda x:x["change"],reverse=True)[:10]
+        heading="🚀 TOP GAINERS · 24H"
+    else:
+        chosen=sorted(rows,key=lambda x:(x["volume"] or 0),reverse=True)[:10]
+        heading="🔥 TOP TRENDING BY 24H VOLUME"
+    lines=[heading]
+    for i,x in enumerate(chosen,1):
+        change="N/A" if x["change"] is None else f'{x["change"]:+.2f}%'
+        lines.append(f'{i}. {x["name"]} ({x["symbol"]}) · {money(x["price"])} · 24h {change}')
+    lines.extend(["",shayari(),"Source: CoinPaprika public market data · Not investment advice."])
+    return "\\n".join(lines)
 async def commentary(kind):
     rows=await get_rows()
     movers=sorted([x for x in rows if x["change"] is not None],key=lambda x:x["change"],reverse=True)
@@ -147,14 +141,10 @@ async def commentary(kind):
     return body+"\n\n"+shayari()+"\n\nData: CoinPaprika · Not financial advice."
 async def publish(app,kind):
     if kind in ("gainers","trending"):
-        url=GAINERS_URL if kind=="gainers" else TRENDING_URL
-        path=await website_banner(url,kind)
-        caption=("🚀 TOP GAINERS · WhalesCoin market highlights" if kind=="gainers" else "🔥 TOP TRENDING · WhalesCoin market highlights")
-        caption+="\n\n"+shayari()+"\n\n"+url
-        try:
-            with path.open("rb") as f: await app.bot.send_photo(chat_id=CHANNEL,photo=f,caption=caption[:1024])
-        finally:path.unlink(missing_ok=True)
-    else: await app.bot.send_message(chat_id=CHANNEL,text=(await commentary(kind))[:4000],disable_web_page_preview=True)
+        body=highlight_text(kind,await get_rows())
+        await app.bot.send_message(chat_id=CHANNEL,text=body[:4000],disable_web_page_preview=True)
+    else:
+        await app.bot.send_message(chat_id=CHANNEL,text=(await commentary(kind))[:4000],disable_web_page_preview=True)
 async def scheduled(context):
     index=context.job.data["index"]
     kind=CATEGORIES[index%4]
@@ -163,18 +153,16 @@ async def scheduled(context):
         log.info("Published scheduled category %s",kind)
     except Exception: log.exception("Scheduled %s failed; skipped safely",kind)
     context.job.data["index"]=(index+1)%8
-async def group_banner(u,c,url,kind):
+async def group_banner(u,c,kind):
     if not in_group(u):return
     try:
-        p=await website_banner(url,kind)
-        with p.open("rb") as f: sent=await u.effective_message.reply_photo(photo=f,caption=f"{kind.title()} · WhalesCoin\n\n"+shayari())
-        c.application.create_task(delete_later(c.bot,sent.chat_id,sent.message_id))
-        c.application.create_task(delete_later(c.bot,u.effective_chat.id,u.effective_message.message_id))
-        p.unlink(missing_ok=True)
+        body=highlight_text(kind,await get_rows())
+        await temp_reply(u,c,body)
     except Exception:
-        log.exception("%s banner failed",kind); await temp_reply(u,c,"WhalesCoin banner is temporarily unavailable.")
-async def gainers_cmd(u,c): await group_banner(u,c,GAINERS_URL,"gainers")
-async def trending_cmd(u,c): await group_banner(u,c,TRENDING_URL,"trending")
+        log.exception("%s highlights failed",kind)
+        await temp_reply(u,c,"Market highlights are temporarily unavailable.")
+async def gainers_cmd(u,c): await group_banner(u,c,"gainers")
+async def trending_cmd(u,c): await group_banner(u,c,"trending")
 async def start_cmd(u,c):
     if in_group(u): await temp_reply(u,c,"WhalesCoin Market Bot ready.\n/price /btc /eth /market /gainers /trending")
 async def post_init(app):
