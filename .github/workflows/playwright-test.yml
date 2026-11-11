@@ -1,0 +1,47 @@
+
+name: Playwright Browser Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Test WhalesCoin
+        run: |
+          cat > test.py <<'PY'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  page = await browser.new_page()
+                  response = await page.goto(
+                      "https://whalescoin.io/market-highlights/trending",
+                      wait_until="domcontentloaded",
+                      timeout=60000
+                  )
+                  print("STATUS:", response.status if response else "No response")
+                  print("TITLE:", await page.title())
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
+          python test.py
+          
