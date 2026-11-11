@@ -220,7 +220,7 @@ async def group_banner(u,c,kind):
         with open(image_path,"rb") as photo:
             msg=await u.effective_message.reply_photo(
                 photo=photo,
-                caption="🐋 WHALESCOIN · "+("TOP GAINERS" if kind=="gainers" else "TRENDING TOP 5")+"\\n"+shayari()
+                caption="🐋 WHALESCOIN · "+("TOP GAINERS" if kind=="gainers" else "TOP TRENDING")+"\n\n"+shayari()
             )
         c.application.create_task(delete_later(c.bot,msg.chat_id,msg.message_id))
         c.application.create_task(delete_later(c.bot,u.effective_message.chat_id,u.effective_message.message_id))
