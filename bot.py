@@ -143,7 +143,19 @@ async def commentary(kind):
 async def publish(app,kind):
     if kind in ("gainers","trending"):
         body=highlight_text(kind,await get_rows())
-        await app.bot.send_message(chat_id=CHANNEL,text=body[:4000],disable_web_page_preview=True)
+        image_name = "gainers.jpg" if kind == "gainers" else "trending.jpg"
+        image_path = os.path.join(os.path.dirname(__file__), image_name)
+        if os.path.isfile(image_path):
+            with open(image_path, "rb") as photo:
+                await app.bot.send_photo(chat_id=CHANNEL, photo=photo,
+                    caption=("🐋 WHALESCOIN · " + ("TOP GAINERS" if kind == "gainers" else "TRENDING TOP 5")
+                             + "\\n\\n" + shayari() + "\\n\\nTemporary test image · Not live refreshed."),
+                    )
+            log.info("Published %s image from %s", kind, image_name)
+        else:
+            await app.bot.send_message(chat_id=CHANNEL,
+                text=body[:4000] + "\\n\\nImage file missing: " + image_name,
+                disable_web_page_preview=True)
     else:
         await app.bot.send_message(chat_id=CHANNEL,text=(await commentary(kind))[:4000],disable_web_page_preview=True)
 async def scheduled(context):
@@ -158,7 +170,15 @@ async def group_banner(u,c,kind):
     if not in_group(u):return
     try:
         body=highlight_text(kind,await get_rows())
-        await temp_reply(u,c,body)
+        image_name = "gainers.jpg" if kind == "gainers" else "trending.jpg"
+        image_path = os.path.join(os.path.dirname(__file__), image_name)
+        if os.path.isfile(image_path):
+            msg = await u.effective_message.reply_photo(photo=open(image_path, "rb"),
+                caption="🐋 WHALESCOIN · " + ("TOP GAINERS" if kind == "gainers" else "TRENDING TOP 5") + "\\n" + shayari())
+            c.application.create_task(delete_later(c.bot, msg.chat_id, msg.message_id))
+            c.application.create_task(delete_later(c.bot, u.effective_message.chat_id, u.effective_message.message_id))
+        else:
+            await temp_reply(u,c,body + "\\n\\nImage file missing: " + image_name)
     except Exception:
         log.exception("%s highlights failed",kind)
         await temp_reply(u,c,"Market highlights are temporarily unavailable.")
