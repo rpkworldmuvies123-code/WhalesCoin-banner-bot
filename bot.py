@@ -20,14 +20,14 @@ ENABLE_SCHEDULER=os.getenv("ENABLE_SCHEDULER","false").lower() in ("1","true","y
 HTTP=requests.Session()
 HTTP.headers.update({"User-Agent":"WhalesCoinTelegramBot/1.0"})
 SHAYARI=[
-"Markets may rise and markets may fall; patience and research matter most of all.",
-"Read the trend, manage the risk, and never let excitement make the decision.",
-"Green candles bring hope, red candles test your plan; discipline matters more than a lucky span.",
-"Every coin has a story to show; check the facts before you go.",
-"Do not chase every shining name; protect your capital, stay in the game.",
-"Prices move fast, but wisdom takes time; make each decision with reason in mind.",
-"Let data guide your way, not fear or greed that fades away.",
-"Big moves attract the crowd; a clear plan speaks louder than the noise."
+"बाज़ार की चाल में जल्दबाज़ी नहीं, समझदारी रखो; हर फैसले से पहले जोखिम की तैयारी रखो।",
+"हरे कैंडल पर जोश न खोना, लाल कैंडल पर होश न खोना; डेटा देखकर चलना, अफ़वाहों के पीछे न होना।",
+"मुनाफ़े की चाह में पूँजी न गंवाना; पहले सीखना, फिर बाज़ार में कदम बढ़ाना।",
+"हर चमकता कॉइन सोना नहीं होता; बिना रिसर्च कोई फैसला सही नहीं होता।",
+"भाव ऊपर जाए या नीचे आए; अनुशासन ही निवेशक को टिकाए।",
+"लालच से दूरी, रिस्क पर नज़र; यही समझदारी है हर सफ़र।",
+"बाज़ार में धैर्य सबसे बड़ा हथियार; सोच-समझकर करना हर व्यापार।",
+"खबरों के शोर में सच पहचानो; आंकड़े पढ़ो, फिर कदम बढ़ाओ।"
 ]
 CATEGORIES=["market","analysis","gainers","trending"]
 
@@ -66,7 +66,17 @@ def coin_detail(symbol,rows):
     ch=x["change"]; pct="N/A" if ch is None else f"{ch:+.2f}%"
     return (f'{x["name"]} ({x["symbol"]})\nRank: #{x["rank"]}\nPrice: {money(x["price"])}\n24h change: {pct}\n'
       f'Market cap: {compact(x["market_cap"])}\n24h volume: {compact(x["volume"])}\nNot financial advice.')
-async def get_rows(): return await asyncio.to_thread(get_tickers)
+async def get_rows():
+    # Retry transient public-API failures without blocking the Telegram event loop.
+    last_error = None
+    for attempt in range(3):
+        try:
+            return await asyncio.to_thread(get_tickers)
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2:
+                await asyncio.sleep(1.5 * (attempt + 1))
+    raise last_error
 async def delete_later(bot,chat_id,message_id):
     await asyncio.sleep(DELETE_SECONDS)
     try: await bot.delete_message(chat_id=chat_id,message_id=message_id)
@@ -119,7 +129,7 @@ def highlight_text(kind, rows):
         heading="🐋 WHALESCOIN · TOP GAINERS · 24H"
     else:
         chosen=sorted(rows,key=lambda x:(x["volume"] or 0),reverse=True)[:10]
-        heading="🐋 WHALESCOIN · TOP TRENDING"
+        heading="🐋 WHALESCOIN · TOP 10 BY 24H VOLUME"
     lines=[heading]
     for i,x in enumerate(chosen,1):
         change="N/A" if x["change"] is None else f'{x["change"]:+.2f}%'
@@ -184,7 +194,7 @@ async def publish(app,kind):
         body=highlight_text(kind,await get_rows())
         image_path = await download_highlight_image(kind)
         try:
-            caption=("🐋 WHALESCOIN · " + ("TOP GAINERS" if kind == "gainers" else "TRENDING TOP 5")
+            caption=("🐋 WHALESCOIN · " + ("TOP GAINERS" if kind == "gainers" else "TOP TRENDING")
                      + "\\n\\n" + shayari() + "\\n\\nSource: WhalesCoin website.")
             with open(image_path, "rb") as photo:
                 await app.bot.send_photo(chat_id=CHANNEL, photo=photo, caption=caption)
