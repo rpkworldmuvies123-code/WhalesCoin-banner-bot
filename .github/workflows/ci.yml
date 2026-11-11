@@ -7,6 +7,7 @@ on:
 jobs:
   compile:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,7 +18,7 @@ jobs:
       - run: python -m py_compile bot.py
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
-      - name: Verify WhalesCoin website export controls
+      - name: Verify WhalesCoin image export flow
         run: |
           python - <<'PY'
           import asyncio
@@ -35,10 +36,12 @@ jobs:
                       )
                       print("HTTP:", response.status if response else "no response")
                       print("TITLE:", await page.title())
-                      await page.get_by_text("Share Top Coins", exact=False).first.wait_for(
-                          state="visible", timeout=20000
-                      )
-                      print("SHARE_TOP_COINS: FOUND")
+                      await page.wait_for_timeout(3000)
+                      await page.get_by_text("Share Top Coins", exact=False).first.click(timeout=20000)
+                      async with page.expect_download(timeout=30000) as download_info:
+                          await page.get_by_text("Download Image", exact=False).first.click(timeout=15000)
+                      download = await download_info.value
+                      print("IMAGE_DOWNLOAD:", download.suggested_filename)
                   finally:
                       await browser.close()
 
