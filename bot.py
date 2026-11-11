@@ -16,6 +16,7 @@ GAINERS_URL=os.getenv("GAINERS_URL","https://whalescoin.io/market-highlights/gai
 TRENDING_URL=os.getenv("TRENDING_URL","https://whalescoin.io/market-highlights/trending")
 DELETE_SECONDS=int(os.getenv("DELETE_SECONDS","5"))
 POST_INTERVAL_HOURS=int(os.getenv("POST_INTERVAL_HOURS","3"))
+ENABLE_SCHEDULER=os.getenv("ENABLE_SCHEDULER","false").lower() in ("1","true","yes")
 HTTP=requests.Session()
 HTTP.headers.update({"User-Agent":"WhalesCoinTelegramBot/1.0"})
 SHAYARI=[
@@ -227,8 +228,12 @@ async def trending_cmd(u,c): await group_banner(u,c,"trending")
 async def start_cmd(u,c):
     if in_group(u): await temp_reply(u,c,"WhalesCoin Market Bot ready.\n/price /btc /eth /market /gainers /trending")
 async def post_init(app):
-    app.job_queue.run_repeating(scheduled,interval=POST_INTERVAL_HOURS*3600,first=30,
-      data={"index":0},name="whalescoin-3-hour-cycle")
+    if ENABLE_SCHEDULER:
+        app.job_queue.run_repeating(scheduled,interval=POST_INTERVAL_HOURS*3600,first=30,
+          data={"index":0},name="whalescoin-3-hour-cycle")
+        log.info("In-process scheduler enabled")
+    else:
+        log.info("In-process scheduler disabled; use the GitHub scheduled publisher")
 def main():
     if not TOKEN:raise SystemExit("Missing TELEGRAM_BOT_TOKEN")
     if not CHANNEL:raise SystemExit("Missing TARGET_CHANNEL")
