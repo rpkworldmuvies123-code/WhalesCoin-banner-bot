@@ -2,3 +2,4 @@ python-telegram-bot[job-queue]==21.10
 python-dotenv==1.0.1
 requests>=2.32.3,<3
 playwright==1.51.0
+Pillow==11.1.0
