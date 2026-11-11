@@ -1,0 +1,50 @@
+name: Publish one test post
+
+on:
+  workflow_dispatch:
+    inputs:
+      category:
+        description: "Choose a text-only test post first"
+        required: true
+        type: choice
+        options:
+          - market
+          - analysis
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/auto-news-market-bot
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - name: Publish selected test post
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TARGET_CHANNEL: ${{ secrets.TARGET_CHANNEL }}
+          POST_KIND: ${{ inputs.category }}
+        run: |
+          python - <<'PY'
+          import asyncio
+          import os
+          from telegram.ext import Application
+          import bot
+
+          async def main():
+              token = os.environ["TELEGRAM_BOT_TOKEN"]
+              kind = os.environ["POST_KIND"]
+              app = Application.builder().token(token).build()
+              await app.initialize()
+              try:
+                  await bot.publish(app, kind)
+                  print(f"Published test post: {kind}")
+              finally:
+                  await app.shutdown()
+
+          asyncio.run(main())
+          PY
