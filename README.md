@@ -1,55 +1,33 @@
-# WhalesCoin Banner Studio (Telegram Bot)
+# WhalesCoin Market & Banner Telegram Bot
 
-A command-driven Telegram bot that uses Gemini to plan and generate 2–3 distinct WhalesCoin banners in English for a Bangladesh-facing audience. It sends previews to the administrator first. It **never publishes unless `/post` is explicitly issued**.
+## Implemented
+- Group commands: /price (Top 50), /btc, /eth, /market, /analysis, /gainers, /trending.
+- Replies and command messages are scheduled for deletion after 5 seconds. The bot must be group admin with Delete Messages permission.
+- CoinPaprika public market data; no Gemini/OpenAI key required.
+- Built-in Hindi shayari pool.
+- Playwright code attempts the WhalesCoin website's own Share Top Coins -> Download Image flow for Gainers and Trending. It sends no fake/local placeholder image.
+- Automated unit tests cover Top 50 sorting, coin lookup, gainers ranking, volume ranking, and Hindi shayari.
 
-## Commands
+## Important blockers verified during testing
+- Android/Termux cannot run Playwright Chromium. The `Unsupported platform: android` error is expected.
+- GitHub-hosted Ubuntu runner reached the WhalesCoin page but received HTTP 403 and a Cloudflare "Just a moment..." page. The Share Top Coins control was therefore not accessible to automation. This means live website image downloading is NOT yet verified and scheduled image publishing must not be enabled on that runner.
+- A Linux VPS/worker may work only if WhalesCoin allows requests from that server's IP. Test the website export flow before enabling scheduled posts. Do not assume Render will bypass the 403.
 
-- `/generate` — generate 3 banners (default)
-- `/generate 2` or `/generate 3` — choose count
-- `/preview` — resend pending previews
-- `/post` — publish pending banners to `@WhalesCoinTalks` and `@WhalesCoinGlobal`
-- `/cancel` — discard pending drafts
-- `/status` — show model, targets, and draft count
-- `/help` — show commands
-
-## 1. Create credentials
-
-1. In Telegram, open `@BotFather`, create a bot with `/newbot`, and copy its token.
-2. Open Google AI Studio and create a Gemini API key. The configured image model is `gemini-3.1-flash-image`; availability, quota, and billing depend on your Google account/project.
-3. Add the bot to both channels and promote it to administrator with permission to **Post Messages**.
-4. The configured admin username is `DesignerPlusDev`. For stronger access control, add your numeric Telegram user ID to `ADMIN_USER_IDS` in `.env`. Do not share API keys or bot tokens in chat.
-
-## 2. Run locally
-
-Python 3.11+ recommended.
-
+## Run the command bot
+Install Python 3.11+, then:
 ```bash
-python -m venv .venv
-# Windows: .venv\\Scripts\\activate
-# Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-# Edit .env and fill in TELEGRAM_BOT_TOKEN and GEMINI_API_KEY
+export TELEGRAM_BOT_TOKEN="your_bot_token"
+export TARGET_CHANNEL="@your_channel"
 python bot.py
 ```
+Optional: set `GROUP_ID` to restrict commands to one group. Keep the process running for commands to respond immediately. The bot's in-process channel scheduler is disabled by default to avoid duplicate posts.
 
-On Android, this can be run in Termux, but a VPS/worker is more reliable for long image-generation requests.
+## Optional scheduler
+On a Linux host where the WhalesCoin Playwright export has been verified, set `ENABLE_SCHEDULER=true`. It starts 30 seconds after startup and posts every 3 hours. If image download fails, the scheduled post is skipped and logged. Do not enable this until the export test succeeds.
 
-## 3. Deploy as a worker
-
-Use a persistent Python worker (VPS, Render Background Worker, or equivalent). Set the environment variables from `.env.example` in the hosting dashboard and use:
-
-- Build command: `pip install -r requirements.txt`
-- Start command: `python bot.py`
-
-Do not run two copies with the same Telegram bot token at the same time; polling conflicts can occur. A Bangladesh server region is optional—the bot's content is English and its displayed timezone is Asia/Dhaka.
-
-## Important behavior and limitations
-
-- `/generate` makes separate image-generation requests, so generation takes time and consumes Gemini API quota/credits according to current Google pricing and access.
-- Gemini may occasionally fail to return an image or may render text imperfectly. Review every preview before `/post`.
-- The bot requests a 16:9 2K image and normalizes it to 1920×1080 PNG.
-- The supplied WhalesCoin logo is passed as a reference image. AI image models may still imperfectly reproduce small logo details; inspect previews.
-- Drafts are held in memory and are cleared if the process restarts. Generate again if that happens.
-- Content instructions prohibit invented exchange listings, partnerships, endorsements, token prices, returns, dates, events, and unsupported product claims.
-- Telegram posting succeeds only if the bot is an administrator in each destination channel with posting permission.
+## Accuracy and operations
+- Trading Analysis is a 24-hour market snapshot, not chart-indicator technical analysis or a trade signal. Top Trending is ranked by 24-hour traded volume from CoinPaprika; it is not a proprietary WhalesCoin trending score.
+- CoinPaprika may rate-limit; failures are logged.
+- Do not run two polling processes with the same Telegram bot token simultaneously.
+- Channel posting requires bot admin permission; deleting group commands requires Delete Messages permission.

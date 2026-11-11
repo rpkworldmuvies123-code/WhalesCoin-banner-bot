@@ -1,0 +1,26 @@
+services:
+  - type: worker
+    name: whalescoin-market-bot
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt && playwright install --with-deps chromium
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TARGET_CHANNEL
+        sync: false
+      - key: GROUP_ID
+        sync: false
+      - key: TIMEZONE
+        value: Asia/Kolkata
+      - key: POST_INTERVAL_HOURS
+        value: "3"
+      - key: ENABLE_SCHEDULER
+        value: "true"
+      - key: DELETE_SECONDS
+        value: "5"
+      - key: GAINERS_URL
+        value: https://whalescoin.io/market-highlights/gainers
+      - key: TRENDING_URL
+        value: https://whalescoin.io/market-highlights/trending
