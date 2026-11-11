@@ -97,6 +97,11 @@ async def coin_cmd(u,c,symbol):
         log.exception("Coin lookup failed"); await temp_reply(u,c,"Coin data temporarily unavailable.")
 async def btc_cmd(u,c): await coin_cmd(u,c,"BTC")
 async def eth_cmd(u,c): await coin_cmd(u,c,"ETH")
+async def analysis_cmd(u,c):
+    if not in_group(u):return
+    try: await temp_reply(u,c,await commentary("analysis"))
+    except Exception:
+        log.exception("Analysis command failed"); await temp_reply(u,c,"Trading analysis data temporarily unavailable.")
 async def market_cmd(u,c):
     if not in_group(u):return
     try:
@@ -179,8 +184,8 @@ def main():
     if not TOKEN:raise SystemExit("Missing TELEGRAM_BOT_TOKEN")
     if not CHANNEL:raise SystemExit("Missing TARGET_CHANNEL")
     app=Application.builder().token(TOKEN).post_init(post_init).build()
-    for name,fn in [("start",start_cmd),("price",price_cmd),("btc",btc_cmd),("eth",eth_cmd),
-      ("market",market_cmd),("gainers",gainers_cmd),("trending",trending_cmd)]:
+    for name,fn in [("start",start_cmd),("price",price_cmd),("btc",btc_cmd),("eth",eth_cmd),("market",market_cmd),
+      ("analysis",analysis_cmd),("gainers",gainers_cmd),("trending",trending_cmd)]:
         app.add_handler(CommandHandler(name,fn))
     log.info("WhalesCoin bot starting. One post every %s hours.",POST_INTERVAL_HOURS)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
